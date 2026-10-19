@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>Carretera Extrema</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main class="wrap">
+    <header class="top">
+      <div class="logo">CARRETERA <span>EXTREMA</span></div>
+      <div class="stats">
+        <div class="stat">PUNTOS<b id="score">0</b></div>
+        <div class="stat">RÉCORD<b id="best">0</b></div>
+        <button class="audiobtn" id="muteMusicBtn" aria-label="Silenciar música" title="Música">🎵</button>
+        <button class="audiobtn" id="muteSfxBtn" aria-label="Silenciar efectos" title="Efectos">🔊</button>
+        <button class="pausebtn" id="pauseBtn" aria-label="Pausar o reanudar" disabled title="Pausa (P)">⏸</button>
+      </div>
+    </header>
+
+    <div class="gamebox">
+      <canvas id="game" width="420" height="700" aria-label="Videojuego de esquivar carros"></canvas>
+      <div class="overlay" id="overlay">
+        <!-- Menús inyectados por JS -->
+      </div>
+      <div id="pauseOverlay">
+        <div class="panel">
+          <div class="eyebrow">EN PAUSA</div>
+          <h1>⏸ PAUSA</h1>
+          <p>El juego está detenido. Pulsa reanudar para continuar.</p>
+          <button class="mainbtn" id="resumeBtn">▶ REANUDAR</button>
+          <p class="hint">También puedes pulsar P o Escape</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="ctrl" id="left" aria-label="Mover a la izquierda">◀</button>
+      <button class="ctrl firebtn" id="fire" aria-label="Disparar">🔫</button>
+      <button class="ctrl" id="right" aria-label="Mover a la derecha">▶</button>
+    </div>
+    <button class="firebtn-float" id="fireFloat" aria-label="Disparar">🔫 FUEGO</button>
+    <div class="foot">¡Mantén los ojos en la carretera y supera tu récord!</div>
+  </main>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

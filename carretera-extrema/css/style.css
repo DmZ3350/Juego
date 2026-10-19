@@ -1,0 +1,51 @@
+*{box-sizing:border-box}
+body{margin:0;background:#091120;color:#e8dbdb;font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:flex;justify-content:center;align-items:flex-start;min-height:100vh}
+.wrap{width:min(100%,480px);padding:12px;display:flex;flex-direction:column;gap:10px}
+.wrap.landscape{width:min(96vw,980px);padding:10px}
+.top{display:flex;justify-content:space-between;align-items:center;padding:3px 4px}
+.logo{font-weight:900;letter-spacing:1.5px;font-size:18px}
+.logo span{color:#56d8ff}
+.stats{display:flex;gap:8px}
+.stat{background:#172438;border:1px solid #293d55;border-radius:10px;padding:7px 11px;font-size:12px;color:#a9c3dc}
+.stat b{display:block;color:white;font-size:18px}
+.gamebox{position:relative;border-radius:18px;overflow:hidden;border:2px solid #2c425b;box-shadow:0 14px 40px #0008;background:#1a2430;line-height:0}.gamebox .overlay,.gamebox .panel{line-height:1.4}.gamebox h1{line-height:1.25}.gamebox p{line-height:1.45}.gamebox .mainbtn{line-height:1.2}
+canvas{display:block;width:100%;height:auto;touch-action:none}
+.overlay{position:absolute;inset:0;background:rgba(6,12,22,.82);display:flex;align-items:center;justify-content:center;padding:18px;z-index:5;line-height:1.4}
+.panel{background:linear-gradient(160deg,#152033,#0d1624);border:1px solid #2d4664;border-radius:18px;padding:22px 20px;text-align:center;max-width:340px;box-shadow:0 12px 40px #000a}
+.eyebrow{font-size:11px;letter-spacing:2px;color:#6eb8e0;margin-bottom:6px}
+h1{margin:0 0 8px;font-size:26px}
+p{margin:0 0 14px;color:#b7c9db;font-size:14px;line-height:1.45}
+.mainbtn{background:linear-gradient(180deg,#3ec8ff,#1a8ec4);color:#041018;border:none;border-radius:12px;padding:12px 22px;font-weight:800;font-size:15px;cursor:pointer;box-shadow:0 4px 0 #0a5a7a;line-height:1.2;display:inline-block;pointer-events:auto;position:relative;z-index:6;margin:4px}
+.mainbtn:active{transform:translateY(2px);box-shadow:0 2px 0 #0a5a7a}
+.mainbtn.chase{background:linear-gradient(180deg,#ff8a4a,#c44a1a);box-shadow:0 4px 0 #7a2a0a;color:#1a0800}
+.mainbtn.chase:active{box-shadow:0 2px 0 #7a2a0a}
+.modebtns{display:flex;flex-direction:column;gap:8px;align-items:center;margin-top:4px}
+.hint{font-size:12px;color:#7a93ab;margin-top:10px}
+.controls{display:flex;gap:12px;justify-content:center}
+.controls button{flex:1;max-width:140px;background:#1a2a3c;border:2px solid #3a5570;color:#fff;border-radius:14px;padding:14px;font-size:22px;cursor:pointer;user-select:none;-webkit-user-select:none}
+.controls button:active{background:#243a50}
+.controls button.firebtn{background:#5a2020;border-color:#a04040;color:#ffccaa;font-size:16px;font-weight:800}
+.controls button.firebtn:active{background:#7a3030}
+.wrap.landscape .firebtn-float{display:block}
+.firebtn-float{display:none;position:absolute;right:12px;bottom:12px;z-index:5;background:#5a2020;border:2px solid #a04040;color:#ffccaa;border-radius:14px;padding:12px 16px;font-weight:800;font-size:14px;cursor:pointer}
+.wrap.landscape .controls{display:none}
+.pausebtn{background:#1a2a3c;border:1px solid #3a5570;color:#a9c3dc;border-radius:10px;padding:7px 12px;font-size:16px;cursor:pointer;line-height:1;min-width:42px}
+.pausebtn:active{background:#243a50}
+.pausebtn:disabled{opacity:.35;cursor:default}
+.audiobtn{background:#1a2a3c;border:1px solid #3a5570;color:#a9c3dc;border-radius:10px;padding:7px 10px;font-size:14px;cursor:pointer;line-height:1;min-width:40px}
+.audiobtn:active{background:#243a50}
+.audiobtn.muted{opacity:.55;border-color:#6a4050;color:#c09090}
+#pauseOverlay{display:none;position:absolute;inset:0;background:rgba(6,12,22,.78);z-index:6;align-items:center;justify-content:center;padding:18px}
+#pauseOverlay.show{display:flex}
+
+/* ===== MAPAS / MENÚ ===== */
+.mapgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0;width:100%}
+.mapcard{background:#132033;border:2px solid #2d4664;border-radius:12px;padding:10px 8px;cursor:pointer;color:#c8dcec;font-size:12px;font-weight:700;text-align:center;line-height:1.3}
+.mapcard:active,.mapcard.selected{border-color:#3ec8ff;background:#1a3348;color:#fff;box-shadow:0 0 0 1px #3ec8ff}
+.mapcard .mapico{font-size:22px;display:block;margin-bottom:4px}
+.mapcard .mapname{font-size:11px;letter-spacing:.3px}
+.backbtn{background:transparent;border:1px solid #3a5570;color:#a9c3dc;border-radius:10px;padding:8px 14px;font-size:13px;cursor:pointer;margin-top:6px}
+.backbtn:active{background:#1a2a3c}
+.maplabel{font-size:11px;color:#7a93ab;margin:0 0 6px}
+.foot{font-size:12px;color:#7a93ab;text-align:center;padding:4px 8px}
+
