@@ -26,6 +26,16 @@ export const SPEED = {
   scoreFactor: 1.1,
 };
 
+/** Ciclos de clima en modo clásico (en puntos de score) */
+export const WEATHER_CYCLE = {
+  stormStart: 200,
+  stormOn: 400,
+  stormOff: 200,
+  meteorStart: 400,
+  meteorOn: 400,
+  meteorOff: 200,
+};
+
 export const POWER = {
   shieldDuration: 7.5,
   ghostDuration: 6.0,
@@ -49,8 +59,8 @@ export const STORAGE_KEYS = {
   bestClassic: 'carreteraBest',
   bestChase: 'carreteraBestChase',
   selectedMap: 'carreteraMap',
-  musicMuted: 'carreteraMusicMuted',
-  sfxMuted: 'carreteraSfxMuted',
+  musicMuted: 'carreteraMuteMusic',   // clave real usada en engine.js
+  sfxMuted: 'carreteraMuteSfx',       // clave real usada en engine.js
 };
 
 /** Definición de mapas — añade uno nuevo aquí y listo */

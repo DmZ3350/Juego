@@ -1,17 +1,18 @@
 /**
- * Motor principal del juego.
- * Lógica portada del monolito, organizada como módulo ES.
+ * Motor principal del juego (lógica + render).
  *
  * Extensión:
- *  - Mapas nuevos  → js/config.js (MAPS)
- *  - Power-ups     → buscar POWER / updatePowerUps
- *  - Modos nuevos  → gameMode + rama en frame/start
- *  - Sistemas      → js/systems/ (futuro)
+ *  - Mapas / constantes → js/config.js
+ *  - Persecución estado → js/systems/chaseState.js
+ *  - Controles         → js/input.js
+ *  - DOM               → js/dom.js
  */
-import { MAPS } from './config.js';
+import { MAPS, POWER, WEATHER_CYCLE } from './config.js';
 import { playerImg, policeImg, policeVanImg, photoBus, photoTaxi, powerToretto } from '../assets/sprites.js';
+import { chase, resetChaseState, toggleGodMode as _toggleGodMode } from './systems/chaseState.js';
 const esmatImg = new Image();
 esmatImg.src = 'assets/esmat.png';
+
 
 import {
   canvas as c, ctx, overlay, wrapEl,
@@ -649,13 +650,12 @@ function playGameOverMusic(){
 
 
 /* ===== MÚSICA CON ARCHIVOS DE AUDIO =====
-   Coloca tus archivos en la misma carpeta que el HTML, o usa rutas/URL.
-   Formatos recomendados: .mp3 o .ogg
+   Archivos en assets/. Formatos recomendados: .mp3 o .ogg
 */
 const MUSIC_FILES = {
-  classic: 'cancion_ clasico.mp3',   // modo clásico
-  chase:   'cancion_persecucion.mp3', // persecución normal
-  fight:   'cancion_lucha.mp3'      // fase de pelea
+  classic: 'assets/cancion_clasico.mp3',   // modo clásico
+  chase:   'assets/cancion_persecucion.mp3', // persecución normal
+  fight:   'assets/cancion_lucha.mp3'      // fase de pelea
 };
 
 let musicAudio = null;
@@ -1655,15 +1655,23 @@ function playMeteorExplosion(){
     o2.connect(g2); g2.connect(masterGain); o2.start(t); o2.stop(t+0.58);
   }catch(e){}
 }
+/** Meteoros: activos meteorOn pts (más difíciles al final), pausa meteorOff, ciclo. */
+function getMeteorIntensity(){
+  if(gameMode !== 'classic') return 0;
+  const c = WEATHER_CYCLE;
+  return cycleWave(score, c.meteorStart, c.meteorOn, c.meteorOff);
+}
 function getMeteorInterval(){
-  // a más puntos, más frecuentes (900→ ~5-8s ; 1500+ → ~1.6-2.5s)
-  const s = Math.max(0, score - 900);
-  const base = Math.max(1.5, 6.5 - s / 120);
-  return base + Math.random() * Math.max(0.6, 2.2 - s / 400);
+  const inten = getMeteorIntensity();
+  if(inten <= 0) return 99;
+  // más intensidad → más frecuentes (≈5s → ≈1.4s)
+  const base = Math.max(1.3, 5.2 - inten * 3.6);
+  return base + Math.random() * Math.max(0.5, 1.8 - inten * 1.2);
 }
 function getMeteorMaxActive(){
-  const s = Math.max(0, score - 900);
-  return Math.min(6, 2 + Math.floor(s / 200));
+  const inten = getMeteorIntensity();
+  if(inten <= 0) return 0;
+  return Math.min(6, 1 + Math.floor(inten * 5));
 }
 function spawnMeteor(){
   const x = ROAD_LEFT + 30 + Math.random() * Math.max(40, ROAD_RIGHT - ROAD_LEFT - 60);
@@ -1679,11 +1687,17 @@ function spawnMeteor(){
   });
 }
 function updateMeteors(dt){
-  if(gameMode !== 'classic' || score < 900 || !running) return;
-  meteorTimer -= dt;
-  if(meteorTimer <= 0 && meteors.filter(m=>!m.done).length < getMeteorMaxActive()){
-    spawnMeteor();
-    meteorTimer = getMeteorInterval();
+  if(gameMode !== 'classic' || !running) return;
+  const inten = getMeteorIntensity();
+  if(inten > 0){
+    meteorTimer -= dt;
+    if(meteorTimer <= 0 && meteors.filter(m=>!m.done).length < getMeteorMaxActive()){
+      spawnMeteor();
+      meteorTimer = getMeteorInterval();
+    }
+  } else {
+    // ventana OFF: cancelar avisos que aún no caen
+    meteors = meteors.filter(m => m.falling || m.done);
   }
   for(const m of meteors){
     if(m.done){ m.fall += dt; continue; }
@@ -1871,16 +1885,29 @@ function drawMeteors(){
   }
 }
 
-function getApoc(){
-  // terremoto: de 500 a 860 (360 puntos de duración)
-  if(score < 500 || score >= 860) return 0;
-  const t = (score - 500) / 360; // 0→1
-  return Math.sin(t * Math.PI); // entra y sale suave
+/** Intensidad cíclica: ON durante onPts (0→1), OFF durante offPts. */
+function cycleWave(score, startAt, onPts, offPts){
+  if(score < startAt) return 0;
+  const cycle = onPts + offPts;
+  const t = (score - startAt) % cycle;
+  if(t >= onPts) return 0;
+  // rampa de dificultad dentro de la ventana ON (0 → 1)
+  return Math.min(1, t / (onPts * 0.85));
 }
-// Tormenta ácida: empieza a los 200 pts (0→1)
+
+function getApoc(){
+  // terremoto ligado al tramo fuerte de la tormenta (opcional, ciclo corto)
+  if(gameMode !== 'classic') return 0;
+  const s = getStorm();
+  // temblor solo cuando la tormenta está intensa
+  return s > 0.55 ? (s - 0.55) / 0.45 : 0;
+}
+
+// Lluvia/tormenta: activa stormOn pts, pausa stormOff, ciclo
 function getStorm(){
-  if(score < 200) return 0;
-  return Math.min(1, (score - 200) / 500);
+  if(gameMode !== 'classic') return 0;
+  const c = WEATHER_CYCLE;
+  return cycleWave(score, c.stormStart, c.stormOn, c.stormOff);
 }
 function updateRoadGeometry(){
   const apoc = getApoc();
@@ -1922,7 +1949,12 @@ function initRain(){
 }
 function updateStorm(dt){
   const storm = getStorm();
-  if(storm <= 0){ lightningFlash = 0; lightningBolts = []; return; }
+  if(storm <= 0){
+    rainDrops = [];
+    lightningFlash = 0;
+    lightningBolts = [];
+    return;
+  }
   if(rainDrops.length === 0) initRain();
   // más gotas si la intensidad sube (tope bajo para rendimiento)
   const target = Math.floor((LANDSCAPE ? 36 : 26) + storm * (LANDSCAPE ? 28 : 20));
@@ -2436,61 +2468,86 @@ function launchWithRamp(car){
   }catch(e){}
 }
 
-/* ===== MODO PERSECUCIÓN ===== */
-let gameMode='classic', health=100, police=null;
-let bullets=[], missiles=[], medkits=[];
-let bulletTimer=0, missileTimer=0, medkitSpawn=0, bulletBurstLeft=0, bulletBurstGap=0;
-let chaseIntroT=0, chaseIntroDone=false, chaseIntroProg=0;
+/* ===== MODO PERSECUCIÓN =====
+   Estado en systems/chaseState.js (`chase`).
+   Variables locales + pull/push para no reescribir todo el cuerpo aún.
+*/
+let gameMode = 'classic';
 
-function resetChase(){
-  health=100; police=null; bullets=[]; missiles=[]; medkits=[];
-  bulletTimer=3; missileTimer=12; medkitSpawn=0;
-  bulletBurstLeft=0; bulletBurstGap=0;
-  chaseIntroT=0; chaseIntroDone=false; chaseIntroProg=0;
-  fightPhase=null; policeHP=200; policeMaxHP=200;
-  playerAmmo=25; reloadTimer=0; playerBullets=[];
-  fightBanner=null; policeLaneTimer=10; fightT=0;
-  actionMusic=false; policeDyingT=0;
-  fightRound=0; fightMissileStep=0; fightMissileWait=0; fightMedkitsSpawned=0;
-  esmat=null; esmatPhase=null; esmatT=0;
-  esmatHP=250; esmatMaxHP=250;
-  esmatLaneTimer=4; esmatBulletTimer=7;
-  esmatBurstLeft=0; esmatBurstGap=0;
-  esmatWaterTimer=0; esmatWaterBlind=0;
-  esmatMissileStep=0; esmatMissileWait=0; esmatMissileCycle=8;
-  esmatRamTimer=7; esmatRamActive=0; esmatRamHitT=0;
-  esmatFrontMode=false; esmatPosTimer=9;
-  esmatDialogue=null;
-  playerRamShield=0; playerRamShieldCD=7; playerRamHitT=0;
-  phase3Medkits=0; phase3ScoreBase=0; phase3Apocalypse=false;
-  thunderT=0; esmatBolts=[];
-  stopSiren();
+function resetChase() {
+  resetChaseState();
+  pullChaseState();
+  try { stopSiren(); } catch (e) {}
 }
-let fightPhase=null, policeHP=200, policeMaxHP=200;
-let playerAmmo=25, reloadTimer=0, playerBullets=[];
-let fightBanner=null, policeLaneTimer=10, fightT=0;
-let actionMusic=false, policeDyingT=0;
-let fightRound=0;
-let fightMedkitsSpawned=0;
-let fightMissileStep=0;
-let fightMissileWait=0;
 
-/* ===== FASE 3 ESMAT ===== */
-let esmat=null;
-let esmatHP=250, esmatMaxHP=250;
-let esmatPhase=null; // wow|best|calm|approach|dlg1|dlg2|dlg3|fight|dying|cleared
-let esmatT=0;
-let esmatLaneTimer=4;
-let esmatBulletTimer=7;
-let esmatBurstLeft=0, esmatBurstGap=0;
-let esmatWaterTimer=0, esmatWaterBlind=0;
-let esmatMissileStep=0, esmatMissileWait=0, esmatMissileCycle=8;
-let esmatRamTimer=7, esmatRamActive=0, esmatRamHitT=0;
-let esmatFrontMode=false, esmatPosTimer=9;
-let esmatDialogue=null;
-let playerRamShield=0, playerRamShieldCD=7, playerRamHitT=0;
-let phase3Medkits=0, phase3ScoreBase=0, phase3Apocalypse=false;
-let thunderT=0, esmatBolts=[];
+let health, police, bullets, missiles, medkits;
+let bulletTimer, missileTimer, medkitSpawn, bulletBurstLeft, bulletBurstGap;
+let chaseIntroT, chaseIntroDone, chaseIntroProg;
+let GOD_MODE;
+let fightPhase, policeHP, policeMaxHP;
+let playerAmmo, reloadTimer, playerBullets;
+let fightBanner, policeLaneTimer, fightT;
+let actionMusic, policeDyingT;
+let fightRound, fightMedkitsSpawned, fightMissileStep, fightMissileWait;
+let esmat, esmatHP, esmatMaxHP, esmatPhase, esmatT;
+let esmatLaneTimer, esmatBulletTimer, esmatBurstLeft, esmatBurstGap;
+let esmatWaterTimer, esmatWaterBlind, esmatMissileStep, esmatMissileWait, esmatMissileCycle;
+let esmatRamTimer, esmatRamActive, esmatRamHitT, esmatFrontMode, esmatPosTimer, esmatDialogue;
+let playerRamShield, playerRamShieldCD, playerRamHitT;
+let phase3Medkits, phase3ScoreBase, phase3Apocalypse, thunderT, esmatBolts;
+
+function pullChaseState() {
+  const c = chase;
+  health = c.health; police = c.police; bullets = c.bullets; missiles = c.missiles; medkits = c.medkits;
+  bulletTimer = c.bulletTimer; missileTimer = c.missileTimer; medkitSpawn = c.medkitSpawn;
+  bulletBurstLeft = c.bulletBurstLeft; bulletBurstGap = c.bulletBurstGap;
+  chaseIntroT = c.chaseIntroT; chaseIntroDone = c.chaseIntroDone; chaseIntroProg = c.chaseIntroProg;
+  GOD_MODE = c.godMode;
+  fightPhase = c.fightPhase; policeHP = c.policeHP; policeMaxHP = c.policeMaxHP;
+  playerAmmo = c.playerAmmo; reloadTimer = c.reloadTimer; playerBullets = c.playerBullets;
+  fightBanner = c.fightBanner; policeLaneTimer = c.policeLaneTimer; fightT = c.fightT;
+  actionMusic = c.actionMusic; policeDyingT = c.policeDyingT;
+  fightRound = c.fightRound; fightMedkitsSpawned = c.fightMedkitsSpawned;
+  fightMissileStep = c.fightMissileStep; fightMissileWait = c.fightMissileWait;
+  esmat = c.esmat; esmatHP = c.esmatHP; esmatMaxHP = c.esmatMaxHP; esmatPhase = c.esmatPhase; esmatT = c.esmatT;
+  esmatLaneTimer = c.esmatLaneTimer; esmatBulletTimer = c.esmatBulletTimer;
+  esmatBurstLeft = c.esmatBurstLeft; esmatBurstGap = c.esmatBurstGap;
+  esmatWaterTimer = c.esmatWaterTimer; esmatWaterBlind = c.esmatWaterBlind;
+  esmatMissileStep = c.esmatMissileStep; esmatMissileWait = c.esmatMissileWait; esmatMissileCycle = c.esmatMissileCycle;
+  esmatRamTimer = c.esmatRamTimer; esmatRamActive = c.esmatRamActive; esmatRamHitT = c.esmatRamHitT;
+  esmatFrontMode = c.esmatFrontMode; esmatPosTimer = c.esmatPosTimer; esmatDialogue = c.esmatDialogue;
+  playerRamShield = c.playerRamShield; playerRamShieldCD = c.playerRamShieldCD; playerRamHitT = c.playerRamHitT;
+  phase3Medkits = c.phase3Medkits; phase3ScoreBase = c.phase3ScoreBase; phase3Apocalypse = c.phase3Apocalypse;
+  thunderT = c.thunderT; esmatBolts = c.esmatBolts;
+}
+
+function pushChaseState() {
+  const c = chase;
+  c.health = health; c.police = police; c.bullets = bullets; c.missiles = missiles; c.medkits = medkits;
+  c.bulletTimer = bulletTimer; c.missileTimer = missileTimer; c.medkitSpawn = medkitSpawn;
+  c.bulletBurstLeft = bulletBurstLeft; c.bulletBurstGap = bulletBurstGap;
+  c.chaseIntroT = chaseIntroT; c.chaseIntroDone = chaseIntroDone; c.chaseIntroProg = chaseIntroProg;
+  c.godMode = GOD_MODE;
+  c.fightPhase = fightPhase; c.policeHP = policeHP; c.policeMaxHP = policeMaxHP;
+  c.playerAmmo = playerAmmo; c.reloadTimer = reloadTimer; c.playerBullets = playerBullets;
+  c.fightBanner = fightBanner; c.policeLaneTimer = policeLaneTimer; c.fightT = fightT;
+  c.actionMusic = actionMusic; c.policeDyingT = policeDyingT;
+  c.fightRound = fightRound; c.fightMedkitsSpawned = fightMedkitsSpawned;
+  c.fightMissileStep = fightMissileStep; c.fightMissileWait = fightMissileWait;
+  c.esmat = esmat; c.esmatHP = esmatHP; c.esmatMaxHP = esmatMaxHP; c.esmatPhase = esmatPhase; c.esmatT = esmatT;
+  c.esmatLaneTimer = esmatLaneTimer; c.esmatBulletTimer = esmatBulletTimer;
+  c.esmatBurstLeft = esmatBurstLeft; c.esmatBurstGap = esmatBurstGap;
+  c.esmatWaterTimer = esmatWaterTimer; c.esmatWaterBlind = esmatWaterBlind;
+  c.esmatMissileStep = esmatMissileStep; c.esmatMissileWait = esmatMissileWait; c.esmatMissileCycle = esmatMissileCycle;
+  c.esmatRamTimer = esmatRamTimer; c.esmatRamActive = esmatRamActive; c.esmatRamHitT = esmatRamHitT;
+  c.esmatFrontMode = esmatFrontMode; c.esmatPosTimer = esmatPosTimer; c.esmatDialogue = esmatDialogue;
+  c.playerRamShield = playerRamShield; c.playerRamShieldCD = playerRamShieldCD; c.playerRamHitT = playerRamHitT;
+  c.phase3Medkits = phase3Medkits; c.phase3ScoreBase = phase3ScoreBase; c.phase3Apocalypse = phase3Apocalypse;
+  c.thunderT = thunderT; c.esmatBolts = esmatBolts;
+}
+
+// Inicializar aliases desde el estado central
+pullChaseState();
 
 function setFightBanner(text, dur){
   fightBanner={text, t:dur||2.5, max:dur||2.5};
@@ -2505,11 +2562,12 @@ function stopActionMusic(){
 }
 function playerShoot(){
   if(gameMode!=='chase' || !running || paused) return;
+  pullChaseState();
   const canShoot = (fightPhase==='fight') || (esmatPhase==='fight');
   if(!canShoot) return;
   if(reloadTimer>0) return;
   const reloadDur = (fightRound===3 || esmatPhase==='fight') ? 14 : 15;
-  if(playerAmmo<=0){ reloadTimer=reloadDur; return; }
+  if(playerAmmo<=0){ reloadTimer=reloadDur; pushChaseState(); return; }
   playerAmmo--;
   playerBullets.push({
     x:playerX+(Math.random()-0.5)*6,
@@ -2520,6 +2578,7 @@ function playerShoot(){
   });
   playGunshot();
   if(playerAmmo<=0) reloadTimer=reloadDur;
+  pushChaseState();
 }
 
 function getChaseTargets(){
@@ -2591,7 +2650,7 @@ function drawPoliceCar(){
   ctx.restore();
   if(chaseIntroDone || chaseIntroProg > 0.4){
     ctx.save();
-    ctx.globalAlpha = 0.08 + 0.1 * a;
+    ctx.globalAlpha = 0.100 + 0.50 * a;
     ctx.fillStyle = phase ? '#ff3030' : '#3060ff';
     if(phase) ctx.fillRect(0, 0, 18, H);
     else ctx.fillRect(W - 18, 0, 18, H);
@@ -2659,12 +2718,53 @@ function playWaterJet(){
   try{
     if(sfxMuted) return;
     resumeAudio(); const t=actx.currentTime;
-    const n=actx.createBufferSource(); n.buffer=createNoiseBuffer(3.2);
-    const nf=actx.createBiquadFilter(); nf.type='bandpass'; nf.frequency.value=1200; nf.Q.value=0.6;
+    const n=actx.createBufferSource(); n.buffer=createNoiseBuffer(3.4);
+    const nf=actx.createBiquadFilter(); nf.type='bandpass';
+    nf.frequency.setValueAtTime(900,t); nf.frequency.linearRampToValueAtTime(1600,t+0.4); nf.Q.value=0.5;
     const ng=actx.createGain();
-    ng.gain.setValueAtTime(0.001,t); ng.gain.linearRampToValueAtTime(0.35,t+0.15);
-    ng.gain.setValueAtTime(0.3,t+2.5); ng.gain.exponentialRampToValueAtTime(0.001,t+3.1);
-    n.connect(nf); nf.connect(ng); ng.connect(sfxGain||masterGain); n.start(t); n.stop(t+3.2);
+    ng.gain.setValueAtTime(0.001,t); ng.gain.linearRampToValueAtTime(0.55,t+0.12);
+    ng.gain.setValueAtTime(0.45,t+2.6); ng.gain.exponentialRampToValueAtTime(0.001,t+3.3);
+    n.connect(nf); nf.connect(ng); ng.connect(sfxGain||masterGain); n.start(t); n.stop(t+3.4);
+    // chorro grave
+    const o=actx.createOscillator(); o.type='sawtooth';
+    o.frequency.setValueAtTime(80,t); o.frequency.linearRampToValueAtTime(55,t+3);
+    const og=actx.createGain(); og.gain.setValueAtTime(0.12,t); og.gain.exponentialRampToValueAtTime(0.001,t+3.2);
+    o.connect(og); og.connect(sfxGain||masterGain); o.start(t); o.stop(t+3.2);
+  }catch(e){}
+}
+function playVictoryCrowd(){
+  try{
+    if(sfxMuted) return;
+    resumeAudio();
+    const t = actx.currentTime;
+    // aplausos (ruido rítmico)
+    for(let i=0;i<12;i++){
+      const n = actx.createBufferSource();
+      n.buffer = createNoiseBuffer(0.15);
+      const nf = actx.createBiquadFilter(); nf.type='bandpass';
+      nf.frequency.value = 800 + Math.random()*1200; nf.Q.value = 0.8;
+      const ng = actx.createGain();
+      const st = t + i*0.18 + Math.random()*0.05;
+      ng.gain.setValueAtTime(0.001, st);
+      ng.gain.linearRampToValueAtTime(0.35, st+0.02);
+      ng.gain.exponentialRampToValueAtTime(0.001, st+0.14);
+      n.connect(nf); nf.connect(ng); ng.connect(sfxGain||masterGain);
+      n.start(st); n.stop(st+0.15);
+    }
+    // gritos / cheer (osciladores)
+    for(let i=0;i<6;i++){
+      const o = actx.createOscillator();
+      o.type = 'sawtooth';
+      const st = t + 0.3 + i*0.35;
+      o.frequency.setValueAtTime(280+Math.random()*200, st);
+      o.frequency.linearRampToValueAtTime(400+Math.random()*150, st+0.25);
+      const g = actx.createGain();
+      g.gain.setValueAtTime(0.001, st);
+      g.gain.linearRampToValueAtTime(0.12, st+0.05);
+      g.gain.exponentialRampToValueAtTime(0.001, st+0.4);
+      o.connect(g); g.connect(sfxGain||masterGain);
+      o.start(st); o.stop(st+0.45);
+    }
   }catch(e){}
 }
 function playRamImpact(){
@@ -2672,9 +2772,13 @@ function playRamImpact(){
     if(sfxMuted) return;
     resumeAudio(); const t=actx.currentTime;
     const o=actx.createOscillator(); o.type='sawtooth';
-    o.frequency.setValueAtTime(90,t); o.frequency.exponentialRampToValueAtTime(40,t+0.2);
-    const g=actx.createGain(); g.gain.setValueAtTime(0.45,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.25);
-    o.connect(g); g.connect(sfxGain||masterGain); o.start(t); o.stop(t+0.28);
+    o.frequency.setValueAtTime(110,t); o.frequency.exponentialRampToValueAtTime(35,t+0.28);
+    const g=actx.createGain(); g.gain.setValueAtTime(0.55,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.3);
+    o.connect(g); g.connect(sfxGain||masterGain); o.start(t); o.stop(t+0.32);
+    const n=actx.createBufferSource(); n.buffer=createNoiseBuffer(0.25);
+    const nf=actx.createBiquadFilter(); nf.type='lowpass'; nf.frequency.value=600;
+    const ng=actx.createGain(); ng.gain.setValueAtTime(0.4,t); ng.gain.exponentialRampToValueAtTime(0.001,t+0.22);
+    n.connect(nf); nf.connect(ng); ng.connect(sfxGain||masterGain); n.start(t); n.stop(t+0.25);
   }catch(e){}
 }
 function spawnEsmatLightning(){
@@ -2691,8 +2795,8 @@ function initEsmat(){
   esmat = {
     lane: laneN, x: lanes[laneN], targetX: lanes[laneN],
     y: H + 140,
-    w: LANDSCAPE ? 100 : 110,
-    h: LANDSCAPE ? 180 : 200,
+    w: LANDSCAPE ? 105 : 118,
+    h: LANDSCAPE ? 188 : 210,
     kind: 'esmat',
     _waterArmed: false, _waterDelay: 0, _burstStarted: false
   };
@@ -2708,67 +2812,111 @@ function fireEsmatBullets(){
 }
 function fireEsmatMissile(){
   if(!esmat) return;
-  const towardBack = esmatFrontMode; // delante => dispara hacia atrás (+vy)
+  const dx = playerX - esmat.x;
+  const dy = PLAYER_Y - esmat.y;
+  const len = Math.sqrt(dx*dx + dy*dy) || 1;
+  const spd = 280;
   missiles.push({
     x: esmat.x,
-    y: towardBack ? esmat.y + esmat.h*0.35 : esmat.y - esmat.h*0.4,
-    vx: (playerX - esmat.x)*0.35,
-    vy: towardBack ? (200+Math.random()*40) : -220,
-    w:14, h:28, life:4, trail:[]
+    y: esmatFrontMode ? esmat.y + esmat.h*0.35 : esmat.y - esmat.h*0.4,
+    vx: (dx/len)*spd * 0.35,
+    vy: (dy/len)*spd,
+    w:14, h:28, life:4.5, trail:[]
   });
-  shake = Math.max(shake, 4);
+  shake = Math.max(shake, 5);
   try{ playMissileLaunch(); }catch(e){}
 }
 function updateEsmatIntro(dt){
   if(fightRound !== 3 || !esmatPhase) return false;
 
+  try {
+
   if(esmatPhase === 'wow'){
-    esmatT += dt; traffic = [];
+    esmatT += dt;
+    traffic = [];
     if(fightBanner){ fightBanner.t -= dt; if(fightBanner.t <= 0) fightBanner = null; }
     if(esmatT >= 4.0){
-      esmatPhase = 'best'; esmatT = 0;
+      esmatPhase = 'best';
+      esmatT = 0;
       setFightBanner('PERO AHORA VIENE LO MEJORR....', 5.0);
-      thunderT = 0;
+      thunderT = 0.3;
     }
     return true;
   }
+
   if(esmatPhase === 'best'){
-    esmatT += dt; traffic = [];
-    shake = Math.max(shake, 3 + Math.sin(esmatT * 22) * 2.5);
+    esmatT += dt;
+    traffic = [];
+    shake = Math.max(shake, 2 + Math.sin(esmatT * 18) * 2);
     thunderT -= dt;
-    if(thunderT <= 0){ spawnEsmatLightning(); thunderT = 0.65 + Math.random()*0.55; }
+    if(thunderT <= 0){
+      try{ spawnEsmatLightning(); }catch(e){}
+      thunderT = 0.7 + Math.random() * 0.5;
+    }
     for(const b of esmatBolts) b.life -= dt;
     esmatBolts = esmatBolts.filter(b => b.life > 0);
     if(fightBanner){ fightBanner.t -= dt; if(fightBanner.t <= 0) fightBanner = null; }
     if(esmatT >= 5.0){
-      esmatPhase = 'calm'; esmatT = 0; esmatBolts = [];
-      phase3ScoreBase = score; fightBanner = null;
+      esmatPhase = 'calm';
+      esmatT = 0;
+      esmatBolts = [];
+      phase3ScoreBase = score;
+      fightBanner = null;
     }
     return true;
   }
+
   if(esmatPhase === 'calm'){
+    // Tráfico normal 50 puntos
     if(score >= phase3ScoreBase + 50){
-      esmatPhase = 'approach'; esmatT = 0; initEsmat();
+      esmatPhase = 'approach';
+      esmatT = 0;
+      initEsmat();
     }
     return false;
   }
+
   if(esmatPhase === 'approach'){
     esmatT += dt;
+    traffic = [];
     if(!esmat) initEsmat();
-    const targetY = PLAYER_Y + (LANDSCAPE ? 95 : 110);
-    const e = Math.min(1, esmatT / 4.0);
-    esmat.y = (H + 140) + (targetY - (H + 140)) * e;
-    esmat.x += (playerX - esmat.x) * Math.min(1, 2*dt);
-    if(esmatT >= 4.0){
+    // Jugador se adelanta lo suficiente para ver el camión ESMAT completo
+    const homeY = H - (LANDSCAPE ? 72 : 85);
+    const forwardY = Math.floor(H * (LANDSCAPE ? 0.40 : 0.36)); // más arriba en pantalla
+    const e = Math.min(1, esmatT / 5.5);
+    const ease = e * e * (3 - 2 * e);
+    PLAYER_Y = Math.floor(homeY + (forwardY - homeY) * ease);
+    // ESMAT detrás con hueco: centro detrás del jugador = se ve el camión entero
+    const gap = (esmat.h * 0.58) + (LANDSCAPE ? 28 : 36);
+    const targetY = PLAYER_Y + gap;
+    esmat.y = (H + 200) + (targetY - (H + 200)) * ease;
+    esmat.x += (playerX - esmat.x) * Math.min(1, 1.0 * dt);
+    esmat.targetX = playerX;
+    if(esmatT >= 5.5){
+      PLAYER_Y = Math.floor(forwardY);
       esmat.y = targetY;
-      esmatPhase = 'dlg1'; esmatT = 0;
+      esmatPhase = 'dlg1';
+      esmatT = 0;
       esmatDialogue = { text: 'SOMOS EL E.S.M.A.T LE ORDENAMOS QUE SE DETENGA', t: 6, max: 6, who: 'esmat' };
     }
     return true;
   }
+
   if(esmatPhase === 'dlg1' || esmatPhase === 'dlg2' || esmatPhase === 'dlg3'){
     esmatT += dt;
-    if(esmatDialogue){ esmatDialogue.t -= dt; if(esmatDialogue.t <= 0) esmatDialogue = null; }
+    traffic = [];
+    // Mantener jugador adelantado y camión completo a la vista
+    const forwardY = Math.floor(H * (LANDSCAPE ? 0.40 : 0.36));
+    PLAYER_Y = Math.floor(forwardY);
+    if(esmat){
+      const gap = (esmat.h * 0.58) + (LANDSCAPE ? 28 : 36);
+      esmat.y += ((PLAYER_Y + gap) - esmat.y) * Math.min(1, 2 * dt);
+      esmat.x += (playerX - esmat.x) * Math.min(1, 1.2 * dt);
+    }
+    if(esmatDialogue){
+      esmatDialogue.t -= dt;
+      if(esmatDialogue.t <= 0) esmatDialogue = null;
+    }
     if(esmatPhase === 'dlg1' && esmatT >= 6){
       esmatPhase = 'dlg2'; esmatT = 0;
       esmatDialogue = { text: 'ME VALE VRG LO QUE USTEDES ME DIGAN!!...', t: 5, max: 5, who: 'player' };
@@ -2777,39 +2925,190 @@ function updateEsmatIntro(dt){
       esmatDialogue = { text: 'ATÉNGASE A LAS CONSECUENCIAS...', t: 3, max: 3, who: 'esmat' };
     } else if(esmatPhase === 'dlg3' && esmatT >= 3.2){
       esmatDialogue = null;
-      esmatPhase = 'fight'; esmatT = 0;
-      playerAmmo = 30; reloadTimer = 0;
-      phase3Medkits = 0; phase3ScoreBase = score;
-      esmatLaneTimer = 4; esmatBulletTimer = 7; esmatMissileCycle = 8;
-      esmatRamTimer = 7; esmatPosTimer = 9; esmatFrontMode = false;
-      playerRamShield = 0; playerRamShieldCD = 7;
-      startActionMusic();
+      esmatPhase = 'fight';
+      esmatT = 0;
+      playerAmmo = 30;
+      reloadTimer = 0;
+      phase3Medkits = 0;
+      phase3ScoreBase = score;
+      esmatLaneTimer = 4;
+      esmatBulletTimer = 7;
+      esmatMissileCycle = 8;
+      esmatMissileStep = 0;
+      esmatMissileWait = 0;
+      esmatRamTimer = 7;
+      esmatRamActive = 0;
+      esmatPosTimer = 9;
+      esmatFrontMode = false;
+      playerRamShield = 0;
+      playerRamShieldCD = 7;
+      esmatBurstLeft = 0;
+      try{ startActionMusic(); }catch(e){}
     }
     return true;
   }
+
   if(esmatPhase === 'dying'){
-    esmatT += dt; traffic = [];
+    esmatT += dt;
+    traffic = [];
     if(esmat){
-      esmat.y += speed * 0.4 * dt;
-      if(esmatT > 0.3 && esmatT < 0.4){ try{ playMeteorExplosion(); }catch(e){} shake = Math.max(shake, 16); spawnCrashParticles(esmat.x, esmat.y, 40); }
+      // Inicializar derrape (como patrulla fase 1)
+      if(esmat.driftDir == null){
+        esmat.driftDir = Math.random() < 0.5 ? -1 : 1;
+        esmat.driftLean = 0;
+        esmat._screech = false;
+        esmat._exploded = false;
+        try{ stopActionMusic(); }catch(e){}
+      }
+      const hoodX = esmat.x;
+      const hoodY = esmat.y - esmat.h * 0.35;
+
+      if(esmatT < 3.0){
+        // HUMO 3s en el capó (más denso que la patrulla)
+        if(Math.random() < 0.65){
+          particles.push({
+            x: hoodX+(Math.random()-0.5)*28, y: hoodY+(Math.random()-0.5)*14,
+            vx: (Math.random()-0.5)*20, vy: -28-Math.random()*40,
+            life: 1.0+Math.random()*0.55, max: 1.0+Math.random()*0.55,
+            size: 16+Math.random()*22, color: '#4a4a4a', smoke: true, rot: 0, vr: 0
+          });
+        }
+        // temblor leve
+        shake = Math.max(shake, 3);
+      } else if(esmatT < 7.2){
+        // FUEGO + DERRAPE lateral + rechinido
+        if(!esmat._screech){ esmat._screech = true; try{ playTireScreech(); }catch(e){} }
+        const driftT = esmatT - 3.0;
+        esmat.x += esmat.driftDir * (45 + driftT * 60) * dt;
+        esmat.driftLean = esmat.driftDir * Math.min(0.6, 0.14 + driftT * 0.13);
+        esmat.y += (speed * 0.32 + 35) * dt;
+        // fuego intenso
+        if(Math.random() < 0.8){
+          particles.push({
+            x: hoodX+(Math.random()-0.5)*24, y: hoodY+(Math.random()-0.5)*10,
+            vx: (Math.random()-0.5)*30, vy: -45-Math.random()*60,
+            life: 0.45+Math.random()*0.4, max: 0.45+Math.random()*0.4,
+            size: 7+Math.random()*14, color: ['#ff6020','#ffaa30','#ff3300','#fff0a0','#ff8040'][Math.floor(Math.random()*5)],
+            rot: 0, vr: 0
+          });
+        }
+        if(Math.random() < 0.4){
+          particles.push({
+            x: hoodX, y: hoodY, vx: (Math.random()-0.5)*14, vy: -22,
+            life: 0.8, max: 0.8, size: 18, color: '#333', smoke: true, rot: 0, vr: 0
+          });
+        }
+        // chispas
+        if(Math.random() < 0.25){
+          particles.push({
+            x: esmat.x+(Math.random()-0.5)*esmat.w*0.4, y: esmat.y+esmat.h*0.2,
+            vx: (Math.random()-0.5)*80, vy: -30-Math.random()*50,
+            life: 0.3+Math.random()*0.25, max: 0.35, size: 3+Math.random()*4,
+            color: '#ffe080', rot: 0, vr: 0
+          });
+        }
+        if(esmat.x < ROAD_LEFT - 20 || esmat.x > ROAD_RIGHT + 20){
+          esmat.x += esmat.driftDir * 90 * dt;
+          esmat.y += speed * 0.55 * dt;
+        }
+        shake = Math.max(shake, 5 + driftT * 1.5);
+      } else {
+        // EXPLOSIÓN final grande
+        if(!esmat._exploded){
+          esmat._exploded = true;
+          spawnCrashParticles(esmat.x, esmat.y, 55);
+          spawnCrashParticles(esmat.x + 30, esmat.y - 20, 25);
+          spawnCrashParticles(esmat.x - 30, esmat.y - 10, 25);
+          try{ playMeteorExplosion(); }catch(e){}
+          shake = Math.max(shake, 22);
+        }
+        esmat.y += speed * 0.7 * dt;
+        esmat.x += esmat.driftDir * 40 * dt;
+      }
     }
-    if(esmatT >= 3.5){
-      esmat = null; esmatPhase = 'cleared'; esmatT = 0;
-      stopActionMusic();
-      setFightBanner('¡HAS DERROTADO AL E.S.M.A.T!', 4.0);
+    // ~8.5s total → victoria
+    if(esmatT >= 8.5){
+      esmat = null;
+      esmatPhase = 'win1';
+      esmatT = 0;
+      try{ playVictoryCrowd(); }catch(e){}
+      setFightBanner('INCREÍBLE, LO LOGRASTE!!!', 3.5);
     }
     return true;
   }
-  if(esmatPhase === 'cleared'){
-    esmatT += dt; traffic = [];
+
+  // Victoria: banners → interferencia → WIN → menú
+  if(esmatPhase === 'win1'){
+    esmatT += dt;
+    traffic = [];
     if(fightBanner){ fightBanner.t -= dt; if(fightBanner.t <= 0) fightBanner = null; }
-    if(esmatT > 4.0){ esmatPhase = null; fightRound = 0; }
+    if(esmatT >= 3.5){
+      esmatPhase = 'win2';
+      esmatT = 0;
+      setFightBanner('HAS GANADO ESTE MODO!!!', 3.5);
+    }
     return true;
   }
+  if(esmatPhase === 'win2'){
+    esmatT += dt;
+    traffic = [];
+    if(fightBanner){ fightBanner.t -= dt; if(fightBanner.t <= 0) fightBanner = null; }
+    if(esmatT >= 3.5){
+      esmatPhase = 'winGlitch';
+      esmatT = 0;
+      fightBanner = null;
+    }
+    return true;
+  }
+  if(esmatPhase === 'winGlitch'){
+    esmatT += dt;
+    traffic = [];
+    shake = Math.max(shake, 6);
+    if(esmatT >= 2.2){
+      esmatPhase = 'winBlack';
+      esmatT = 0;
+    }
+    return true;
+  }
+  if(esmatPhase === 'winBlack'){
+    esmatT += dt;
+    traffic = [];
+    if(esmatT >= 2.8){
+      esmatPhase = null;
+      fightRound = 0;
+      running = false;
+      over = true;
+      try{ stopMusic(); stopEngine(); stopSiren(); }catch(e){}
+      showMainMenu();
+    }
+    return true;
+  }
+
+  if(esmatPhase === 'cleared'){
+    // compat: redirigir a victoria
+    esmatPhase = 'win1';
+    esmatT = 0;
+    try{ playVictoryCrowd(); }catch(e){}
+    setFightBanner('INCREÍBLE, LO LOGRASTE!!!', 3.5);
+    return true;
+  }
+
   return esmatPhase === 'fight';
+
+  } catch(err){
+    console.warn('updateEsmatIntro', err);
+    return true;
+  }
 }
+
 function updateEsmatFight(dt){
   if(esmatPhase !== 'fight' || !esmat) return;
+  try {
+  traffic = []; // sin tráfico en pelea ESMAT
+
+  // Mantener jugador adelantado: camión ESMAT se ve completo detrás
+  const forwardY = Math.floor(H * (LANDSCAPE ? 0.40 : 0.36));
+  PLAYER_Y = Math.floor(forwardY);
 
   const off = Math.max(0, score - phase3ScoreBase);
   const cycle = off % 667;
@@ -2818,72 +3117,94 @@ function updateEsmatFight(dt){
   esmatLaneTimer -= dt;
   if(esmatLaneTimer <= 0){
     const opts = [0,1,2].filter(n => n !== esmat.lane);
-    esmat.lane = opts[Math.floor(Math.random()*opts.length)];
+    esmat.lane = opts[Math.floor(Math.random() * opts.length)];
     esmat.targetX = lanes[esmat.lane];
     esmatLaneTimer = 4;
   }
 
   esmatPosTimer -= dt;
-  if(esmatPosTimer <= 0){ esmatFrontMode = !esmatFrontMode; esmatPosTimer = 9; }
-  const backY = PLAYER_Y + (LANDSCAPE ? 95 : 110);
-  const frontY = Math.floor(H * 0.28);
+  if(esmatPosTimer <= 0){
+    esmatFrontMode = !esmatFrontMode;
+    esmatPosTimer = 9;
+  }
+  const gap = (esmat.h * 0.58) + (LANDSCAPE ? 28 : 36);
+  const backY = PLAYER_Y + gap;
+  // delante: aún cabe el camión sin salir de pantalla
+  const frontY = Math.max(esmat.h * 0.52 + 12, Math.floor(H * 0.22));
   const wantY = esmatFrontMode ? frontY : backY;
 
-  // Ram lateral
+  // Choque lateral
   esmatRamTimer -= dt;
-  if(esmatRamTimer <= 0 && esmatRamActive <= 0){ esmatRamActive = 6; esmatRamTimer = 13; }
+  if(esmatRamTimer <= 0 && esmatRamActive <= 0){
+    esmatRamActive = 6;
+    esmatRamTimer = 13;
+    esmat.ramSide = (Math.random() < 0.5) ? -1 : 1;
+  }
   if(esmatRamActive > 0){
     esmatRamActive -= dt;
-    esmat.targetX = playerX;
-    esmat.x += (playerX - esmat.x) * Math.min(1, 5*dt);
-    esmat.y += (backY - esmat.y) * Math.min(1, 2*dt);
+    const sideX = playerX + esmat.ramSide * (LANDSCAPE ? 70 : 62);
+    esmat.x += (sideX - esmat.x) * Math.min(1, 1.5 * dt);
+    esmat.y += (PLAYER_Y - esmat.y) * Math.min(1, 1.1 * dt);
     esmatRamHitT -= dt;
-    if(esmatRamHitT <= 0 && Math.abs(esmat.x - playerX) < 52 && Math.abs(esmat.y - PLAYER_Y) < 95){
+    if(esmatRamHitT <= 0 && Math.abs(esmat.x - playerX) < 70 && Math.abs(esmat.y - PLAYER_Y) < 100){
       if(playerRamShield <= 0){
-        health = Math.max(0, health - 4);
-        playRamImpact(); shake = Math.max(shake, 8);
-        spawnCrashParticles(playerX, PLAYER_Y, 6);
-        if(health <= 0){ health = 0; triggerHealthDeath(); return; }
+        if(!GOD_MODE) health = Math.max(0, health - 4);
+        try{ playRamImpact(); }catch(e){}
+        shake = Math.max(shake, 10);
+        spawnCrashParticles((esmat.x + playerX) / 2, PLAYER_Y, 10);
+        if(!GOD_MODE && health <= 0){ health = 0; triggerHealthDeath(); return; }
       }
-      esmatRamHitT = 0.5;
+      esmatRamHitT = 0.55;
     }
   } else {
-    esmat.x += (esmat.targetX - esmat.x) * Math.min(1, 3*dt);
-    esmat.y += (wantY - esmat.y) * Math.min(1, 2.2*dt);
+    esmat.x += (esmat.targetX - esmat.x) * Math.min(1, 1.35 * dt);
+    esmat.y += (wantY - esmat.y) * Math.min(1, 1.05 * dt);
   }
 
-  // Balas ESMAT
+  // Balas
   esmatBulletTimer -= dt;
   if(esmatBulletTimer <= 0){ fireEsmatBullets(); esmatBulletTimer = 7; }
   if(esmatBurstLeft > 0){
     esmatBurstGap -= dt;
     if(esmatBurstGap <= 0){
-      const dir = esmatFrontMode ? 1 : -1;
+      const dx = playerX - esmat.x;
+      const dy = PLAYER_Y - esmat.y;
+      const len = Math.sqrt(dx*dx + dy*dy) || 1;
+      const spd = 380;
       bullets.push({
-        x: esmat.x + (Math.random()-0.5)*20,
-        y: esmat.y + dir * esmat.h * 0.35,
-        vx: (playerX - esmat.x)*0.2,
-        vy: dir * (300 + Math.random()*40),
-        r: 4, life: 2.5
+        x: esmat.x + (Math.random()-0.5)*16,
+        y: esmat.y + (esmatFrontMode ? esmat.h*0.3 : -esmat.h*0.3),
+        vx: (dx/len)*spd + (Math.random()-0.5)*40,
+        vy: (dy/len)*spd,
+        r: 5, life: 3.0
       });
-      esmatBurstLeft--; esmatBurstGap = 0.1;
+      esmatBurstLeft--;
+      esmatBurstGap = 0.1;
       try{ playGunshot(); }catch(e){}
     }
   }
+
   if(esmat._waterArmed){
     esmat._waterDelay -= dt;
     if(esmat._waterDelay <= 0){
       esmat._waterArmed = false;
-      esmatWaterTimer = 3; esmatWaterBlind = 5;
-      playWaterJet();
+      esmatWaterTimer = 3;
+      esmatWaterBlind = 5;
+      try{ playWaterJet(); }catch(e){}
     }
   }
-  if(esmatWaterTimer > 0) esmatWaterTimer -= dt;
+  if(esmatWaterTimer > 0){
+    esmatWaterTimer -= dt;
+    esmat.waterAimX = playerX;
+    esmat.waterAimY = PLAYER_Y;
+  }
   if(esmatWaterBlind > 0) esmatWaterBlind -= dt;
 
   esmatMissileCycle -= dt;
   if(esmatMissileCycle <= 0 && esmatMissileStep === 0){
-    esmatMissileStep = 1; esmatMissileWait = 0; esmatMissileCycle = 8;
+    esmatMissileStep = 1;
+    esmatMissileWait = 0;
+    esmatMissileCycle = 8;
   }
   if(esmatMissileStep > 0){
     esmatMissileWait -= dt;
@@ -2894,35 +3215,51 @@ function updateEsmatFight(dt){
     }
   }
 
-  // Poder escudos jugador
+  // Escudos jugador
   if(playerRamShield > 0){
     playerRamShield -= dt;
-    const side = (playerX <= esmat.x) ? -1 : 1;
-    const want = esmat.x + side * 58;
+    if(!esmat.playerRamSide) esmat.playerRamSide = (playerX <= esmat.x) ? -1 : 1;
+    const want = esmat.x + esmat.playerRamSide * (LANDSCAPE ? 72 : 64);
     playerTargetX = want;
-    playerX += (want - playerX) * Math.min(1, 6*dt);
+    playerX += (want - playerX) * Math.min(1, 2.0 * dt);
+    let bestL = 0, bestD = 1e9;
+    for(let i=0;i<3;i++){ const d=Math.abs(lanes[i]-playerX); if(d<bestD){bestD=d;bestL=i;} }
+    lane = bestL;
     playerRamHitT -= dt;
-    if(playerRamHitT <= 0 && Math.abs(playerX - esmat.x) < 72 && Math.abs(PLAYER_Y - esmat.y) < 110){
+    if(playerRamHitT <= 0 && Math.abs(playerX - esmat.x) < 78 && Math.abs(PLAYER_Y - esmat.y) < 110){
       esmatHP = Math.max(0, esmatHP - 4);
-      esmat.x += (Math.random()-0.5) * 18;
-      playRamImpact(); shake = Math.max(shake, 6);
-      spawnCrashParticles(esmat.x, esmat.y, 5);
-      playerRamHitT = 0.45;
-      if(esmatHP <= 0){ esmatHP = 0; esmatPhase = 'dying'; esmatT = 0; playerBullets=[]; bullets=[]; missiles=[]; return; }
+      esmat.x += esmat.playerRamSide * -8 + (Math.random()-0.5)*6;
+      try{ playRamImpact(); }catch(e){}
+      shake = Math.max(shake, 7);
+      spawnCrashParticles(esmat.x, esmat.y, 8);
+      playerRamHitT = 0.5;
+      if(esmatHP <= 0){
+        esmatHP = 0; esmatPhase = 'dying'; esmatT = 0;
+        playerBullets = []; bullets = []; missiles = [];
+        return;
+      }
     }
   } else {
+    esmat.playerRamSide = null;
     playerRamShieldCD -= dt;
-    if(playerRamShieldCD <= 0){ playerRamShield = 6; playerRamShieldCD = 13; }
+    if(playerRamShieldCD <= 0){
+      playerRamShield = 6;
+      playerRamShieldCD = 13;
+      esmat.playerRamSide = (playerX <= esmat.x) ? -1 : 1;
+    }
   }
 
-  // Balas jugador vs ESMAT
   for(const b of playerBullets){
-    b.x += b.vx*dt; b.y += b.vy*dt; b.life -= dt;
-    if(Math.abs(b.x - esmat.x) < esmat.w*0.42 && Math.abs(b.y - esmat.y) < esmat.h*0.42){
+    b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+    if(Math.abs(b.x - esmat.x) < esmat.w * 0.45 && Math.abs(b.y - esmat.y) < esmat.h * 0.45){
       b.life = -1;
       esmatHP = Math.max(0, esmatHP - 4);
-      spawnCrashParticles(b.x, b.y, 4);
-      if(esmatHP <= 0){ esmatHP = 0; esmatPhase = 'dying'; esmatT = 0; playerBullets=[]; bullets=[]; missiles=[]; break; }
+      spawnCrashParticles(b.x, b.y, 5);
+      if(esmatHP <= 0){
+        esmatHP = 0; esmatPhase = 'dying'; esmatT = 0;
+        playerBullets = []; bullets = []; missiles = [];
+        break;
+      }
     }
   }
   playerBullets = playerBullets.filter(b => b.life > 0 && b.y > -40);
@@ -2934,34 +3271,49 @@ function updateEsmatFight(dt){
 
   if(phase3Medkits < 4){
     medkitSpawn += dt;
-    if(medkitSpawn > 8 && medkits.length < 1){ spawnMedkit(); medkitSpawn = 0; phase3Medkits++; }
-  }
-  for(const k of medkits){
-    k.y += (speed*0.85)*dt; k.rot = (k.rot||0) + dt*2;
-    if(Math.abs(k.x - playerX) < 40 && Math.abs(k.y - PLAYER_Y) < 50){
-      k.got = true; health = Math.min(100, health + 16);
+    if(medkitSpawn > 8 && medkits.length < 1){
+      spawnMedkit();
+      medkitSpawn = 0;
+      phase3Medkits++;
     }
   }
-  medkits = medkits.filter(k => !k.got && k.y < H+40);
+  for(const k of medkits){
+    k.y += (speed * 0.85) * dt;
+    k.rot = (k.rot || 0) + dt * 2;
+    if(Math.abs(k.x - playerX) < 40 && Math.abs(k.y - PLAYER_Y) < 50){
+      k.got = true;
+      health = Math.min(100, health + 16);
+    }
+  }
+  medkits = medkits.filter(k => !k.got && k.y < H + 40);
 
-  if(phase3Apocalypse && Math.random() < 0.02){
-    spawnCrashParticles(ROAD_LEFT + Math.random()*(ROAD_RIGHT-ROAD_LEFT), 80+Math.random()*H*0.5, 3);
+  } catch(err){
+    console.warn('updateEsmatFight', err);
   }
 }
 
+
 function updateChase(dt){
   if(gameMode!=='chase') return;
+  pullChaseState();
 
   // ===== FASE 3 ESMAT (intro / diálogos / pelea) =====
-  if(updateEsmatIntro(dt)){
-    if(esmatPhase === 'fight') updateEsmatFight(dt);
-    // seguir procesando balas/misiles abajo solo en fight; en intro cortamos tráfico
+  let esmatBlock = false;
+  try {
+    esmatBlock = updateEsmatIntro(dt);
+  } catch(e){ console.warn('esmat intro', e); }
+  if(esmatBlock){
+    if(esmatPhase === 'fight'){
+      try{ updateEsmatFight(dt); }catch(e){ console.warn('esmat fight', e); }
+    }
+    // Intro / diálogos / victoria: no seguir lógica de policía
     if(esmatPhase !== 'fight' && esmatPhase !== 'calm'){
       if(fightBanner){ fightBanner.t -= dt; if(fightBanner.t <= 0) fightBanner = null; }
+      pushChaseState();
       return;
     }
   } else if(esmatPhase === 'fight'){
-    updateEsmatFight(dt);
+    try{ updateEsmatFight(dt); }catch(e){ console.warn('esmat fight', e); }
   }
 
   // intro: ambos suben desde abajo hasta su posición final
@@ -2987,6 +3339,7 @@ function updateChase(dt){
       if(police) police.y=cam.poly;
       startSiren();
     }
+    pushChaseState();
     return;
   }
 
@@ -3000,6 +3353,7 @@ function updateChase(dt){
       fightT=0;
       setFightBanner('PERO... ¿CREES QUE ACABÓ?', 3.0);
     }
+    pushChaseState();
     return;
   }
 
@@ -3023,6 +3377,7 @@ function updateChase(dt){
       missileTimer=8;
       startSiren();
     }
+    pushChaseState();
     return;
   }
 
@@ -3044,6 +3399,7 @@ function updateChase(dt){
       fightPhase='done';
       // tráfico vuelve (spawn se reactiva con fightPhase==='done')
     }
+    pushChaseState();
     return;
   }
 
@@ -3144,6 +3500,7 @@ function updateChase(dt){
       }
     }
     if(fightBanner){ fightBanner.t-=dt; if(fightBanner.t<=0) fightBanner=null; }
+    pushChaseState();
     return;
   }
 
@@ -3159,14 +3516,54 @@ function updateChase(dt){
       esmatT = 0;
       setFightBanner('WOOW... PARECE QUE ERES BUENO', 4.0);
     }
+    pushChaseState();
+    return;
+  }
+
+  // ===== Fase 3 ESMAT activa: solo balas/misiles, sin lógica de policía =====
+  const esmatActive = (fightRound === 3) || (esmatPhase && esmatPhase !== 'calm');
+  if(esmatActive){
+    // Actualizar proyectiles del ESMAT (no tocar police)
+    const bulletDmg = 8;
+    const missileDmg = 9;
+    for(const b of bullets){
+      b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt;
+      if(Math.abs(b.x-playerX)<28 && Math.abs(b.y-PLAYER_Y)<40){
+        b.life=-1;
+        if(!GOD_MODE) health = Math.max(0, health - bulletDmg);
+        shake=Math.max(shake,5);
+        try{ playHitImpact(); }catch(e){}
+        spawnCrashParticles(playerX, PLAYER_Y-20, 8);
+        if(!GOD_MODE && health<=0){ health=0; pushChaseState(); triggerHealthDeath(); return; }
+      }
+    }
+    bullets=bullets.filter(b=>b.life>0 && b.y>-40 && b.y<H+40);
+    for(const m of missiles){
+      m.vx+=(playerX-m.x)*1.8*dt;
+      m.vx=Math.max(-180,Math.min(180,m.vx));
+      m.x+=m.vx*dt; m.y+=m.vy*dt; m.life-=dt;
+      if(!m.trail) m.trail=[];
+      m.trail.push({x:m.x,y:m.y}); if(m.trail.length>8) m.trail.shift();
+      if(Math.abs(m.x-playerX)<36 && Math.abs(m.y-PLAYER_Y)<48){
+        m.life=-1;
+        if(!GOD_MODE) health = Math.max(0, health - missileDmg);
+        shake=Math.max(shake,12);
+        try{ playHitImpact(); }catch(e){}
+        spawnCrashParticles(playerX, PLAYER_Y-10, 20);
+        if(!GOD_MODE && health<=0){ health=0; pushChaseState(); triggerHealthDeath(); return; }
+      }
+    }
+    missiles=missiles.filter(m=>m.life>0 && m.y>-60 && m.y<H+60);
+    if(fightBanner){ fightBanner.t-=dt; if(fightBanner.t<=0) fightBanner=null; }
+    pushChaseState();
     return;
   }
 
   // a partir de aquí se necesita policía
-  if(!police) return;
+  if(!police){ pushChaseState(); return; }
 
-  // --- FASE 1: pickup a los 400 pts ---
-  if(!fightPhase && chaseIntroDone && score>=400 && (!police || police.kind!=='van')){
+  // --- FASE 1: pickup a los 400 pts (nunca durante fase 3) ---
+  if(!fightPhase && chaseIntroDone && score>=400 && fightRound!==3 && !esmatPhase && (!police || police.kind!=='van')){
     fightRound=1;
     fightPhase='warn';
     fightT=0;
@@ -3175,7 +3572,7 @@ function updateChase(dt){
   }
 
   // --- FASE 2: furgón a los 1100 pts ---
-  if(fightPhase==='done' && police && police.kind==='van' && score>=1100){
+  if(fightPhase==='done' && police && police.kind==='van' && score>=1100 && fightRound!==3){
     fightRound=2;
     fightPhase='warn';
     fightT=0;
@@ -3187,7 +3584,7 @@ function updateChase(dt){
   }
 
   const cam=getChaseTargets();
-  if(police.kind!=='van'){
+  if(police && police.kind!=='van'){
     police.w=cam.polW; police.h=cam.polH;
   }
 
@@ -3203,6 +3600,7 @@ function updateChase(dt){
       police.targetX = lanes[police.lane];
     }
     if(fightBanner){ fightBanner.t-=dt; if(fightBanner.t<=0) fightBanner=null; }
+    pushChaseState();
     return;
   }
 
@@ -3243,6 +3641,7 @@ function updateChase(dt){
       setFightBanner(fightRound===2 ? '¡LUCHA FASE 2!' : '¡LUCHA!', 1.5);
     }
     if(fightBanner){ fightBanner.t-=dt; if(fightBanner.t<=0) fightBanner=null; }
+    pushChaseState();
     return;
   }
 
@@ -3278,6 +3677,7 @@ function updateChase(dt){
           policeDyingT=0;
           playerBullets=[]; bullets=[]; missiles=[];
           if(fightBanner){ fightBanner.t-=dt; if(fightBanner.t<=0) fightBanner=null; }
+          pushChaseState();
           return;
         }
       }
@@ -3369,16 +3769,18 @@ function updateChase(dt){
     }
   }
 
-  // balas policía vs jugador
+  // balas policía / ESMAT vs jugador
+  const bulletDmg = (esmatPhase==='fight' || fightRound===3) ? 8 : ((fightRound===2) ? 7 : 8);
+  const missileDmg = (esmatPhase==='fight' || fightRound===3) ? 9 : ((fightRound===2) ? 13 : 17);
   for(const b of bullets){
     b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt;
     if(Math.abs(b.x-playerX)<28 && Math.abs(b.y-PLAYER_Y)<40){
       b.life=-1;
-      health=Math.max(0,health-((fightRound===2)?7:8));
+      if(!GOD_MODE) health = Math.max(0, health - bulletDmg);
       shake=Math.max(shake,5);
       playHitImpact();
       spawnCrashParticles(playerX, PLAYER_Y-20, 8);
-      if(health<=0){ health=0; triggerHealthDeath(); return; }
+      if(!GOD_MODE && health<=0){ health=0; pushChaseState(); triggerHealthDeath(); return; }
     }
   }
   bullets=bullets.filter(b=>b.life>0 && b.y>-40 && b.y<H+40);
@@ -3387,14 +3789,15 @@ function updateChase(dt){
     m.vx+=(playerX-m.x)*1.8*dt;
     m.vx=Math.max(-180,Math.min(180,m.vx));
     m.x+=m.vx*dt; m.y+=m.vy*dt; m.life-=dt;
+    if(!m.trail) m.trail=[];
     m.trail.push({x:m.x,y:m.y}); if(m.trail.length>8) m.trail.shift();
     if(Math.abs(m.x-playerX)<36 && Math.abs(m.y-PLAYER_Y)<48){
       m.life=-1;
-      health=Math.max(0,health-((fightRound===2)?13:17));
+      if(!GOD_MODE) health = Math.max(0, health - missileDmg);
       shake=Math.max(shake,12);
       playHitImpact();
       spawnCrashParticles(playerX, PLAYER_Y-10, 20);
-      if(health<=0){ health=0; triggerHealthDeath(); return; }
+      if(!GOD_MODE && health<=0){ health=0; pushChaseState(); triggerHealthDeath(); return; }
     }
   }
   missiles=missiles.filter(m=>m.life>0 && m.y>-60 && m.y<H+60);
@@ -3434,14 +3837,18 @@ function updateChase(dt){
   }
 
   if(fightBanner){ fightBanner.t-=dt; if(fightBanner.t<=0) fightBanner=null; }
+  pushChaseState();
 }
 function drawChase(){
   if(gameMode!=='chase') return;
+  pullChaseState();
+
+
   // botiquines
   for(const k of medkits){
     ctx.save();
-    ctx.translate(k.x,k.y);
-    ctx.rotate(k.rot*0.2);
+    ctx.translate(k.x, k.y);
+    ctx.rotate((k.rot||0)*0.2);
     ctx.fillStyle='#e8f8e8';
     ctx.beginPath(); ctx.roundRect(-14,-14,28,28,5); ctx.fill();
     ctx.fillStyle='#e03030';
@@ -3451,22 +3858,26 @@ function drawChase(){
     ctx.stroke();
     ctx.restore();
   }
+
   // balas
   for(const b of bullets){
     ctx.fillStyle='#ffe060';
-    ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(b.x,b.y,b.r||4,0,Math.PI*2); ctx.fill();
     ctx.fillStyle='#fff';
     ctx.beginPath(); ctx.arc(b.x,b.y-2,2,0,Math.PI*2); ctx.fill();
   }
+
   // misiles
   for(const m of missiles){
-    for(let i=0;i<m.trail.length;i++){
-      const t=m.trail[i];
-      ctx.globalAlpha=0.15+i*0.08;
-      ctx.fillStyle='#ff6020';
-      ctx.beginPath(); ctx.arc(t.x,t.y,3+i*0.4,0,Math.PI*2); ctx.fill();
+    if(m.trail){
+      for(let i=0;i<m.trail.length;i++){
+        const t=m.trail[i];
+        ctx.globalAlpha=0.15+i*0.08;
+        ctx.fillStyle='#ff6020';
+        ctx.beginPath(); ctx.arc(t.x,t.y,3+i*0.4,0,Math.PI*2); ctx.fill();
+      }
+      ctx.globalAlpha=1;
     }
-    ctx.globalAlpha=1;
     ctx.save();
     ctx.translate(m.x,m.y);
     const ang=Math.atan2(m.vy,m.vx)+Math.PI/2;
@@ -3479,15 +3890,19 @@ function drawChase(){
     ctx.fillRect(-5,-14,10,6);
     ctx.restore();
   }
+
   if(police) drawPoliceCar();
+
   // balas del jugador
   for(const b of playerBullets){
     ctx.fillStyle='#7dff9a';
-    ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(b.x,b.y,b.r||3.5,0,Math.PI*2); ctx.fill();
     ctx.fillStyle='#fff';
     ctx.beginPath(); ctx.arc(b.x,b.y-1.5,1.5,0,Math.PI*2); ctx.fill();
   }
+
   drawHealthBar();
+
   // vida patrulla
   if(fightPhase==='fight' && police){
     const barW=Math.min(180,W*0.5), barH=12;
@@ -3503,13 +3918,13 @@ function drawChase(){
     ctx.font='bold 10px sans-serif';
     ctx.textAlign='center';
     ctx.fillText('🚔 PATRULLA '+Math.ceil(policeHP)+'/'+policeMaxHP, W/2, y-4);
-    // munición
     ctx.textAlign='left';
     ctx.fillStyle=reloadTimer>0?'#ffaa60':'#a0ffc0';
     ctx.font='bold 11px sans-serif';
     if(reloadTimer>0) ctx.fillText('RECARGA '+reloadTimer.toFixed(1)+'s', 12, H-38);
     else ctx.fillText('🔫 '+playerAmmo+'/25', 12, H-38);
   }
+
   // banner
   if(fightBanner){
     const a=Math.min(1, fightBanner.t, fightBanner.max-fightBanner.t);
@@ -3519,13 +3934,13 @@ function drawChase(){
     ctx.fillStyle='rgba(0,0,0,0.55)';
     ctx.fillRect(0, H*0.38, W, 56);
     ctx.fillStyle='#ffcc40';
-    ctx.font='bold 22px sans-serif';
+    ctx.font='bold 20px sans-serif';
     ctx.textAlign='center';
     ctx.fillText(fightBanner.text, W/2 + shakeX, H*0.38+36);
     ctx.restore();
   }
 
-  // ===== FASE 3 visuals =====
+  // rayos fase 3 intro
   for(const b of esmatBolts){
     ctx.save();
     ctx.strokeStyle = 'rgba(200,230,255,' + (b.life/b.max) + ')';
@@ -3538,30 +3953,54 @@ function drawChase(){
     ctx.stroke();
     ctx.restore();
   }
-  if(esmat && esmatPhase && esmatPhase !== 'wow' && esmatPhase !== 'best' && esmatPhase !== 'calm'){
+
+  // ESMAT
+  if(esmat && esmatPhase && esmatPhase !== 'wow' && esmatPhase !== 'best' && esmatPhase !== 'calm'
+      && esmatPhase !== 'win1' && esmatPhase !== 'win2' && esmatPhase !== 'winGlitch' && esmatPhase !== 'winBlack'){
     ctx.save();
     ctx.translate(esmat.x, esmat.y);
-    if(esmatImg && esmatImg.complete && esmatImg.naturalWidth){
+    if(esmat.driftLean) ctx.rotate(esmat.driftLean * 0.35);
+    if(esmatImg && esmatImg.complete && esmatImg.naturalWidth > 0){
       ctx.drawImage(esmatImg, -esmat.w/2, -esmat.h/2, esmat.w, esmat.h);
     } else {
-      ctx.fillStyle = '#151515';
-      ctx.beginPath(); ctx.roundRect(-esmat.w/2, -esmat.h/2, esmat.w, esmat.h, 6); ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 11px sans-serif';
+      ctx.fillStyle = '#1a1a1e';
+      ctx.beginPath(); ctx.roundRect(-esmat.w/2, -esmat.h/2, esmat.w, esmat.h, 8); ctx.fill();
+      ctx.fillStyle = '#c8c8d0';
+      ctx.font = 'bold 12px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('ESMAT', 0, 6);
-    }
-    // chorro de agua visual
-    if(esmatWaterTimer > 0){
-      const dir = esmatFrontMode ? 1 : -1;
-      ctx.globalAlpha = 0.45;
-      ctx.fillStyle = '#6ec8ff';
-      for(let i=0;i<8;i++){
-        ctx.fillRect(-6 + (Math.random()-0.5)*10, dir * (esmat.h*0.2 + i*12), 12, 14);
-      }
-      ctx.globalAlpha = 1;
+      ctx.fillText('POLICÍA', 0, esmat.h*0.28);
+      ctx.fillText('489', 0, esmat.h*0.38);
     }
     ctx.restore();
+
+    // chorro de agua dirigido
+    if(esmatWaterTimer > 0){
+      const aimX = esmat.waterAimX != null ? esmat.waterAimX : playerX;
+      const aimY = esmat.waterAimY != null ? esmat.waterAimY : PLAYER_Y;
+      const sx = esmat.x, sy = esmat.y + (esmatFrontMode ? esmat.h*0.25 : -esmat.h*0.25);
+      const dx = aimX - sx, dy = aimY - sy;
+      const steps = 18;
+      ctx.save();
+      for(let i=0;i<steps;i++){
+        const t = i / steps;
+        const px = sx + dx * t + Math.sin(performance.now()/40 + i)*4;
+        const py = sy + dy * t;
+        const r = 3 + t * 8;
+        ctx.globalAlpha = 0.55 * (1 - t * 0.5);
+        ctx.fillStyle = i%2 ? '#8ad8ff' : '#c8f0ff';
+        ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI*2); ctx.fill();
+      }
+      ctx.globalAlpha = 0.4;
+      ctx.fillStyle = '#a0e0ff';
+      for(let i=0;i<10;i++){
+        const ang = (performance.now()/80 + i) * 0.8;
+        ctx.beginPath();
+        ctx.arc(aimX + Math.cos(ang)*18, aimY + Math.sin(ang)*12, 3, 0, Math.PI*2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
     if(esmatPhase === 'fight'){
       const barW = Math.min(180, W*0.5), barH = 12;
       const x = W/2 - barW/2, y = 10;
@@ -3592,23 +4031,36 @@ function drawChase(){
       }
     }
   }
+
+  // ceguera agua
   if(esmatWaterBlind > 0){
     ctx.save();
-    const a = 0.22 + 0.2 * Math.min(1, esmatWaterBlind / 5);
-    ctx.fillStyle = 'rgba(30,90,160,'+a+')';
+    const pct = Math.min(1, esmatWaterBlind / 5);
+    const a = 0.28 + 0.32 * pct;
+    const g = ctx.createRadialGradient(W/2, H/2, H*0.1, W/2, H/2, H*0.75);
+    g.addColorStop(0, 'rgba(40,120,200,'+(a*0.35)+')');
+    g.addColorStop(0.55, 'rgba(20,70,140,'+a+')');
+    g.addColorStop(1, 'rgba(5,20,50,'+(a*1.1)+')');
+    ctx.fillStyle = g;
     ctx.fillRect(0,0,W,H);
-    ctx.fillStyle = 'rgba(180,220,255,0.35)';
     const t = performance.now();
-    for(let i=0;i<24;i++){
-      const gx = (t/7 + i*53) % W;
-      const gy = (t/4 + i*37) % H;
-      ctx.fillRect(gx, gy, 2, 10);
+    for(let i=0;i<40;i++){
+      const gx = (t*0.15 + i*61) % W;
+      const gy = (t*0.45 + i*47) % H;
+      ctx.globalAlpha = 0.25 + 0.35 * pct * ((i%3)/3);
+      ctx.fillStyle = '#d0f0ff';
+      ctx.fillRect(gx, gy, 2 + (i%3), 8 + (i%5)*2);
     }
+    ctx.globalAlpha = 0.12 * pct;
+    ctx.fillStyle = '#9ed8ff';
+    for(let y=0;y<H;y+=6) ctx.fillRect(0, y, W, 2);
     ctx.restore();
   }
+
+  // diálogo
   if(esmatDialogue){
     ctx.save();
-    const fade = Math.min(esmatDialogue.t, 0.8, esmatDialogue.max - esmatDialogue.t);
+    const fade = Math.min(esmatDialogue.t, 0.8, Math.max(0.1, esmatDialogue.max - esmatDialogue.t));
     ctx.globalAlpha = Math.max(0.25, Math.min(1, fade * 1.5));
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(W*0.06, H*0.34, W*0.88, 78);
@@ -3618,28 +4070,106 @@ function drawChase(){
     ctx.fillStyle = esmatDialogue.who === 'player' ? '#7dffb0' : '#ffd060';
     ctx.font = 'bold 14px sans-serif';
     ctx.textAlign = 'center';
-    // wrap simple
     const words = esmatDialogue.text.split(' ');
-    let line = '', lines = [], maxW = W*0.8;
+    let line = '', linesArr = [], maxW = W*0.8;
     for(const w of words){
       const test = line ? line+' '+w : w;
-      if(ctx.measureText(test).width > maxW){ lines.push(line); line = w; }
+      if(ctx.measureText(test).width > maxW){ linesArr.push(line); line = w; }
       else line = test;
     }
-    if(line) lines.push(line);
-    lines.forEach((ln, idx) => ctx.fillText(ln, W/2, H*0.34 + 34 + idx*18));
+    if(line) linesArr.push(line);
+    linesArr.forEach((ln, idx) => ctx.fillText(ln, W/2, H*0.34 + 34 + idx*18));
     ctx.restore();
   }
+
+  // escudos laterales jugador
   if(playerRamShield > 0 && esmatPhase === 'fight'){
     ctx.save();
     ctx.translate(playerX, PLAYER_Y);
-    ctx.globalAlpha = 0.5 + 0.3*Math.sin(performance.now()/80);
-    ctx.strokeStyle = '#40e0ff';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(-36, -50, 72, 100);
+    const pulse = 0.7 + 0.3*Math.sin(performance.now()/90);
+    for(const side of [-1, 1]){
+      const x = side * 34;
+      ctx.globalAlpha = pulse;
+      const grd = ctx.createLinearGradient(x-8, 0, x+8, 0);
+      grd.addColorStop(0, '#1a6080');
+      grd.addColorStop(0.5, '#60e8ff');
+      grd.addColorStop(1, '#1a6080');
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.roundRect(x - 7, -48, 14, 96, 4);
+      ctx.fill();
+      ctx.strokeStyle = '#c0ffff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#e0ffff';
+      for(let i=0;i<5;i++){
+        ctx.beginPath();
+        ctx.arc(x, -40 + i*18, 2.2, 0, Math.PI*2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 0.25 * pulse;
+      ctx.fillStyle = '#40d0ff';
+      ctx.beginPath();
+      ctx.ellipse(x, 0, 16, 55, 0, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // modo prueba
+  if(GOD_MODE){
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,220,40,0.95)';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText('⚡ MODO PRUEBA (W)', W - 12, 24);
+    ctx.restore();
+  }
+
+  // victoria: interferencia
+  if(esmatPhase === 'winGlitch'){
+    ctx.save();
+    const t = performance.now();
+    for(let i=0;i<14;i++){
+      const y = ((t*0.2 + i*47) % H);
+      const h = 2 + (i%4);
+      ctx.globalAlpha = 0.15 + 0.25*Math.random();
+      ctx.fillStyle = i%2 ? '#0f0' : '#0ff';
+      ctx.fillRect(0, y, W, h);
+      if(i%3===0){
+        ctx.fillStyle = '#fff';
+        ctx.globalAlpha = 0.08;
+        ctx.fillRect(Math.random()*W*0.7, Math.random()*H, 40+Math.random()*80, 8+Math.random()*20);
+      }
+    }
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = '#fff';
+    for(let x=0;x<W;x+=3){
+      if(Math.random()<0.15) ctx.fillRect(x, Math.random()*H, 2, 1);
+    }
+    ctx.restore();
+  }
+
+  // victoria: pantalla negra WIN
+  if(esmatPhase === 'winBlack'){
+    ctx.save();
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0,0,W,H);
+    const pulse = 0.7 + 0.3*Math.sin(performance.now()/200);
+    ctx.globalAlpha = pulse;
+    ctx.fillStyle = '#ffe040';
+    ctx.font = 'bold 64px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('WIN', W/2, H/2);
+    ctx.globalAlpha = 0.6;
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillStyle = '#aaa';
+    ctx.fillText('Volviendo al menú...', W/2, H/2 + 50);
     ctx.restore();
   }
 }
+
 function drawHealthBar(){
   const barW=Math.min(160,W*0.4), barH=12;
   const x=12, y=H-22;
@@ -3736,7 +4266,13 @@ function frame(t){
       }
     });
   }
-  spawn+=dt; if(!(gameMode==='chase' && fightPhase && fightPhase!=='done') && spawn>Math.max(.62,1.28-score/200)){addTraffic();spawn=0}
+  spawn+=dt; {
+  const blockTraffic = (gameMode==='chase' && (
+    (fightPhase && fightPhase!=='done') ||
+    (esmatPhase && esmatPhase!=='calm')
+  ));
+  if(!blockTraffic && spawn>Math.max(.62,1.28-score/200)){addTraffic();spawn=0}
+}
   if(((frame._tick=(frame._tick|0)+1)%3)===0) updateEngine(speed);
   updateLaneChanges(dt); updatePowerUps(dt); updateParticles(dt); updateStorm(dt); updateMeteors(dt);
 
@@ -3817,7 +4353,7 @@ function frame(t){
       drawTrafficCar(car, ang, car.scale||1);
     }
   });
-  drawChase();
+  try{ drawChase(); }catch(e){ console.warn('drawChase', e); }
   drawPowerHUD();
   drawParticles();
   drawStorm();
@@ -3829,6 +4365,7 @@ function frame(t){
 }
 
 function triggerCrash(other){
+  if(GOD_MODE) return;
   if(!running) return;
   running=false; paused=false; crashAnim=true; crashT=0; shake=20;
   setPauseUI(false);
@@ -3845,6 +4382,10 @@ function triggerCrash(other){
 
 function showMainMenu(){
   const m = getMap();
+  // Mostrar el récord del modo clásico por defecto en el menú
+  best = bestClassic;
+  if (bestEl) bestEl.textContent = best;
+  if (scoreEl) scoreEl.textContent = '0';
   overlay.innerHTML = `<div class="panel">
     <div class="eyebrow">JUEGO DE CONDUCCIÓN</div>
     <h1>CARRETERA<br>EXTREMA</h1>
@@ -3907,7 +4448,7 @@ function showGameOver(){
     if(final>bestClassic){bestClassic=final;localStorage.setItem('carreteraBest',bestClassic)}
     best=bestClassic;
   }
-  // best UI updated on start
+  if (bestEl) bestEl.textContent = best;
   const modeLabel = gameMode==='chase' ? 'PERSECUCIÓN' : 'CLÁSICO';
   const reason = (gameMode==='chase' && health<=0) ? '¡SIN VIDA!' : '¡CHOQUE!';
   overlay.innerHTML=`<div class="panel"><div class="eyebrow">${modeLabel}</div><h1>${reason}</h1><p>Tu puntuación: <b>${final}</b><br>Récord ${modeLabel}: <b>${best}</b></p><div class="modebtns"><button class="mainbtn" id="btnMenu">🏠 MENÚ</button><button class="mainbtn" id="againClassic">↻ CLÁSICO</button><button class="mainbtn chase" id="againChase">↻ PERSECUCIÓN</button></div><p class="hint">Cada modo tiene su propio récord.</p></div>`;
@@ -3926,12 +4467,13 @@ function start(mode){
   layout();
   score=0;speed=260;spawn=0;roadOffset=0;ambientScroll=0;traffic=[];particles=[];
   lane=1;playerX=lanes[lane];playerTargetX=playerX;
-  over=false;running=true;paused=false;crashAnim=false;crashT=0;shake=0;crashOther=null;powerUps=[];powerTimer=0;powerActive=false;powerType=null;powerSpawn=3;gunBullets=[];gunFireTimer=0;
+  over=false;running=true;paused=false;crashAnim=false;crashT=0;shake=0;crashOther=null;powerUps=[];powerTimer=0;powerActive=false;powerType=null;powerSpawn=POWER.spawnStart;gunBullets=[];gunFireTimer=0;
   rainDrops=[];lightningTimer=1.5;lightningFlash=0;lightningBolts=[];
   resetMeteors();
   resetChase();
   best = (gameMode==='chase' ? bestChase : bestClassic);
-  // best UI updated on start
+  if (scoreEl) scoreEl.textContent = '0';
+  if (bestEl) bestEl.textContent = best;
   overlay.style.display='none'; setPauseUI(false); last=performance.now();
   startEngine(); startMusic(); requestAnimationFrame(frame);
 }
@@ -3974,3 +4516,10 @@ export function getRunning() { return running; }
 export function getPaused() { return paused; }
 export function getGameMode() { return gameMode; }
 export function getScore() { return score; }
+export function toggleGodMode(){
+  pullChaseState();
+  const v = _toggleGodMode();
+  GOD_MODE = chase.godMode;
+  return v;
+}
+export function getGodMode(){ return chase.godMode; }

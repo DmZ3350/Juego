@@ -1,10 +1,11 @@
 /**
- * Estado central del juego.
- * Un solo objeto mutable que todos los sistemas leen/escriben.
- * Facilita guardar/cargar, depurar y añadir sistemas nuevos.
+ * Modelo de estado central del juego (para sistemas futuros).
+ * Actualmente el motor usa variables propias + systems/chaseState.js
+ * para persecución. Este archivo define la forma objetivo del estado
+ * cuando se complete la migración a sistemas.
  */
 
-import { MAPS, STORAGE_KEYS, CHASE, POWER } from './config.js';
+import { MAPS, STORAGE_KEYS, POWER } from './config.js';
 
 function loadNumber(key, fallback = 0) {
   const v = localStorage.getItem(key);
@@ -21,7 +22,7 @@ function loadBool(key, fallback = false) {
 export function createInitialState() {
   const selectedMap = localStorage.getItem(STORAGE_KEYS.selectedMap) || 'costa';
   return {
-    // Canvas / layout (rellenados por layout.js)
+    // Layout (rellenado por layout)
     landscape: false,
     W: 420,
     H: 700,
@@ -80,39 +81,15 @@ export function createInitialState() {
     // Modo
     gameMode: 'classic', // 'classic' | 'chase'
 
-    // Persecución
-    health: 100,
-    police: null,
-    bullets: [],
-    missiles: [],
-    medkits: [],
-    bulletTimer: 0,
-    missileTimer: 0,
-    medkitSpawn: 0,
-    bulletBurstLeft: 0,
-    bulletBurstGap: 0,
-    chaseIntroT: 0,
-    chaseIntroDone: false,
-    chaseIntroProg: 0,
-    fightPhase: null,
-    policeHP: CHASE.policeMaxHP,
-    policeMaxHP: CHASE.policeMaxHP,
-    playerAmmo: CHASE.playerMaxAmmo,
-    reloadTimer: 0,
-    playerBullets: [],
-    fightBanner: null,
-    policeLaneTimer: 10,
-    fightT: 0,
-    actionMusic: false,
-    policeDyingT: 0,
+    // Persecución: ver systems/chaseState.js (estado activo)
 
-    // Audio flags
+    // Audio
     musicMuted: loadBool(STORAGE_KEYS.musicMuted, false),
     sfxMuted: loadBool(STORAGE_KEYS.sfxMuted, false),
   };
 }
 
-/** Estado global de la sesión (singleton) */
+/** Estado global de la sesión (singleton, preparado para sistemas) */
 export const state = createInitialState();
 
 export function getMap() {
@@ -154,33 +131,6 @@ export function resetGameplayState() {
   state.lightningBolts = [];
   state.meteors = [];
   state.meteorTimer = 2.5;
-}
-
-export function resetChaseState() {
-  state.health = 100;
-  state.police = null;
-  state.bullets = [];
-  state.missiles = [];
-  state.medkits = [];
-  state.bulletTimer = 3;
-  state.missileTimer = 12;
-  state.medkitSpawn = 0;
-  state.bulletBurstLeft = 0;
-  state.bulletBurstGap = 0;
-  state.chaseIntroT = 0;
-  state.chaseIntroDone = false;
-  state.chaseIntroProg = 0;
-  state.fightPhase = null;
-  state.policeHP = CHASE.policeMaxHP;
-  state.policeMaxHP = CHASE.policeMaxHP;
-  state.playerAmmo = CHASE.playerMaxAmmo;
-  state.reloadTimer = 0;
-  state.playerBullets = [];
-  state.fightBanner = null;
-  state.policeLaneTimer = 10;
-  state.fightT = 0;
-  state.actionMusic = false;
-  state.policeDyingT = 0;
 }
 
 export function saveBestScore() {

@@ -6,18 +6,25 @@ Juego de conducción (clásico + persecución) reorganizado en módulos ES para 
 
 ```
 carretera-extrema/
-├── index.html              # HTML limpio
-├── css/
-│   └── style.css           # Estilos
+├── index.html
+├── css/style.css
 ├── assets/
-│   └── sprites.js          # Imágenes (base64) exportadas
+│   ├── sprites.js          # Sprites base64
+│   ├── esmat.png           # Camión policial (jefe)
+│   ├── cancion_clasico.mp3
+│   ├── cancion_persecucion.mp3
+│   └── cancion_lucha.mp3
 ├── js/
-│   ├── main.js             # Arranque
-│   ├── config.js           # Constantes y MAPS (punto de extensión #1)
-│   ├── state.js            # Modelo de estado limpio (para sistemas futuros)
-│   ├── dom.js              # Referencias DOM
-│   ├── input.js            # Teclado / táctil
-│   └── engine.js           # Motor completo (lógica + render)
+│   ├── main.js
+│   ├── config.js           # Constantes y MAPS
+│   ├── state.js            # Modelo de estado (futuro)
+│   ├── dom.js
+│   ├── input.js
+│   ├── engine.js           # Motor (lógica + render)
+│   └── systems/
+│       ├── chaseState.js   # Estado persecución/ESMAT
+│       ├── chase.js
+│       └── README.md
 └── README.md
 ```
 
@@ -107,5 +114,12 @@ Cada sistema exporta `{ update(dt, state), draw(ctx, state) }` y `main`/`engine`
 ## Notas
 
 - Los sprites pesados viven en `assets/sprites.js` (importados una vez).
-- El audio es Web Audio API procedural (sin archivos externos obligatorios).
+- Hay música real en `assets/` (clásico, persecución y lucha). El motor también genera SFX procedurales.
 - Récords y mapa elegido se guardan en `localStorage`.
+- Tecla **W** activa/desactiva modo PRUEBA (invencible).
+
+### Notas de mantenimiento
+
+- Estado de persecución centralizado en `js/systems/chaseState.js`.
+- Asset duplicado `camion.png` eliminado (era idéntico a `esmat.png`).
+- Código residual y comentarios de transición eliminados.

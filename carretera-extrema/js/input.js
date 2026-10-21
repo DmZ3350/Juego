@@ -10,7 +10,7 @@ import {
 import {
   move, playerShoot, togglePause, start,
   resumeAudio, toggleMusicMute, toggleSfxMute,
-  getRunning, getPaused,
+  getRunning, getPaused, toggleGodMode,
 } from './engine.js';
 
 export function bindInput() {
@@ -34,6 +34,11 @@ export function bindInput() {
     if (['ArrowLeft', 'a', 'A'].includes(e.key)) {
       e.preventDefault();
       move(-1);
+    }
+    // Tecla W = modo PRUEBA (invencible ON/OFF)
+    if(e.key === 'w' || e.key === 'W'){
+      e.preventDefault();
+      toggleGodMode();
     }
     if (['ArrowRight', 'd', 'D'].includes(e.key)) {
       e.preventDefault();
@@ -91,3 +96,4 @@ export function bindInput() {
     window.addEventListener(ev, () => resumeAudio(), { once: false });
   });
 }
+
